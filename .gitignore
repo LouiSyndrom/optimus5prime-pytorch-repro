@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Machine learning outputs
+checkpoints/
+outputs/
+runs/
+*.pt
+*.pth
+
+# Logs
+*.log
+
+#data
+/data/
+
+# Python packaging outputs
+*.egg-info/
+build/
+dist/
+
+# Ridge model and experiment outputs
+/artifacts/
+/results/
+
+# Progress
+RIDGE_PROGRESS.md

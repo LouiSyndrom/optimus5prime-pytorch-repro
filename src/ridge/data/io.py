@@ -1,0 +1,95 @@
+"""Read sequence data and apply the project's deterministic cleaning rules."""
+
+from numbers import Integral
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+def _require_columns(df, columns):
+    missing = [column for column in columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {', '.join(missing)}")
+
+
+def load_data(path: str | Path) -> pd.DataFrame:
+    """Read CSV or CSV.gz, preserving extra columns and original row order."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Data file not found: {path}")
+    df = pd.read_csv(path, dtype={"utr": "string"})
+    _require_columns(df, ("utr", "rl", "total_reads"))
+    df["source_row"] = np.arange(len(df))
+    return df
+
+
+def clean_data(
+    df: pd.DataFrame,
+    *,
+    sequence_length: int = 50,
+    map_u_to_t: bool = True,
+) -> tuple[pd.DataFrame, dict]:
+    """Return a cleaned copy and QC; source_row comes from load_data().
+
+    Keep the highest-coverage record per normalized sequence, breaking ties
+    by source_row. Retain original MRL units and all extra columns.
+    """
+    _require_columns(df, ("utr", "rl", "total_reads", "source_row"))
+    if (
+        not isinstance(sequence_length, Integral)
+        or isinstance(sequence_length, bool)
+        or sequence_length <= 0
+    ):
+        raise ValueError("sequence_length must be a positive integer")
+    rows = df["source_row"]
+    if (
+        not pd.api.types.is_integer_dtype(rows.dtype)
+        or rows.isna().any()
+        or not rows.is_unique
+        or rows.lt(0).any()
+    ):
+        raise ValueError("source_row must contain unique, non-negative integers from load_data()")
+
+    data = df.copy()
+    data["utr"] = data["utr"].astype("string").str.strip().str.upper()
+    if map_u_to_t:
+        data["utr"] = data["utr"].str.replace("U", "T", regex=False)
+    qc = {
+        "input_rows": len(data),
+        "removed": {},
+        "parameters": {"sequence_length": int(sequence_length), "map_u_to_t": bool(map_u_to_t)},
+        "normalization": "strip surrounding whitespace, uppercase, then optional U-to-T",
+        "normalized_length_counts": {
+            str(length): int(count)
+            for length, count in data["utr"].str.len().value_counts().sort_index().items()
+        },
+        "duplicate_rule": "highest total_reads; ties use lowest source_row; never average labels",
+        "policy": "project cleaning rules; not an exact reproduction of the original paper's selection",
+    }
+
+    columns = ["rl", "total_reads"]
+    data[columns] = data[columns].apply(pd.to_numeric, errors="coerce")
+    valid = np.isfinite(data[columns].to_numpy(dtype=float, na_value=np.nan)).all(axis=1)
+    qc["removed"]["invalid_numeric"] = int((~valid).sum())
+    data = data.loc[valid].copy()
+
+    valid = data["total_reads"].ge(0)
+    qc["removed"]["negative_total_reads"] = int((~valid).sum())
+    data = data.loc[valid].copy()
+
+    valid = (
+        data["utr"].str.len().eq(sequence_length)
+        & data["utr"].str.fullmatch("[ACGT]+", na=False)
+    ).fillna(False)
+    qc["removed"]["invalid_sequence"] = int((~valid).sum())
+    data = data.loc[valid].copy()
+
+    duplicates = data[data.duplicated("utr", keep=False)]
+    qc["duplicate_groups"] = int(duplicates["utr"].nunique())
+    qc["conflicting_label_groups"] = int(duplicates.groupby("utr")["rl"].nunique().gt(1).sum())
+    data = data.sort_values(["total_reads", "source_row"], ascending=[False, True])
+    qc["removed"]["duplicate_sequence"] = int(data.duplicated("utr").sum())
+    data = data.drop_duplicates("utr", keep="first").reset_index(drop=True)
+    qc["output_rows"] = len(data)
+    return data, qc
