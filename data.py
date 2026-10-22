@@ -93,31 +93,35 @@ def assign_data(encoded_data: tuple[np.ndarray, np.ndarray]) -> tuple[tuple[np.n
     """
     This function will take a seed and get a bunch of indexes at proportions for testing, validating, and training. It will then use the indexes to randomly pull the encoded data and assign it to each group. Then, a tuple of each group will be returned   
     """
-
     num_seq = len(encoded_data[0])
+
+    index_list = list(range(num_seq))
+
+
+    training, index_list = assign_training(encoded_data, num_seq)
+
+    validating, index_list = assign_validating(encoded_data, index_list, num_seq)
+
+    testing = assign_testing(encoded_data, index_list)
+
+
+    print("Data fully split.")
+
+
+    return (training, validating, testing)
+
+def assign_training(encoded_data: tuple[np.ndarray, np.ndarray], num_seq: int) -> tuple[tuple[np.ndarray, np.ndarray], list[int]]:
+
+    training_fract = 0.8
+    training_num = int(num_seq * training_fract)
 
     seed = 42
     random_num_gen = random.Random(seed)
 
-    training_fract = 0.8
-    training_num = int(num_seq * training_fract)
-    training = (np.zeros((training_num, 4, 50)), np.zeros(training_num))
     training_indexes = []
-
-
-    validation_fract = 0.1
-    validation_num = int(num_seq * validation_fract)
-    validation = (np.zeros((validation_num, 4, 50)), np.zeros(validation_num))
-    validation_indexes = []
-
-
-    testing_num = num_seq - training_num - validation_num
-    testing = (np.zeros((testing_num, 4, 50)), np.zeros(testing_num))
-    testing_indexes = []
-
-
     index_list = list(range(num_seq))
 
+    training = (np.zeros((training_num, 4, 50)), np.zeros(training_num))
 
     for i in range(training_num):
 
@@ -130,38 +134,9 @@ def assign_data(encoded_data: tuple[np.ndarray, np.ndarray]) -> tuple[tuple[np.n
         training_indexes.append(random_index)
 
         if i == training_num - 1:
-            print(i+1, "Training indexes found")
+            print(i+1, "Training indexes found.")
 
-
-    for i in range(validation_num):
-
-        index_list_len = len(index_list)
-
-        random_num = random_num_gen.randint(0, (index_list_len - 1))
-
-        random_index = index_list.pop(random_num)
-
-        validation_indexes.append(random_index)
-
-        if i == validation_num - 1:
-            print(i+1, "Validation indexes found")
-
-
-    for i in range(testing_num):
-
-        index_list_len = len(index_list)
-
-        random_num = random_num_gen.randint(0, (index_list_len - 1))
-
-        random_index = index_list.pop(random_num)
-
-        testing_indexes.append(random_index)
-
-        if i == testing_num - 1:
-            print(i+1, "Testing indexes found")
-
-
-    tr_count = 0
+        tr_count = 0
 
     for index in training_indexes:
 
@@ -173,35 +148,69 @@ def assign_data(encoded_data: tuple[np.ndarray, np.ndarray]) -> tuple[tuple[np.n
 
         tr_count += 1
 
+    return training, index_list
 
-    va_count = 0
+def assign_validating(encoded_data: tuple[np.ndarray, np.ndarray], index_list: list[float], num_seq: int) -> tuple[tuple[np.ndarray, np.ndarray], list[int]]:
 
-    for index in validation_indexes:
+    validating_fract = 0.1
+    validating_num = int(num_seq * validating_fract)
+
+    seed = 42
+    random_num_gen = random.Random(seed)
+
+    validating_indexes = []
+
+    validating = (np.zeros((validating_num, 4, 50)), np.zeros(validating_num))
+
+    for i in range(validating_num):
+
+        index_list_len = len(index_list)
+
+        random_num = random_num_gen.randint(0, (index_list_len - 1))
+
+        random_index = index_list.pop(random_num)
+
+        validating_indexes.append(random_index)
+
+        if i == validating_num - 1:
+            print(i+1, "Validating indexes found.")
+
+        va_count = 0
+
+    for index in validating_indexes:
 
         data = encoded_data[0][index]
         mrl = encoded_data[1][index]
 
-        validation[0][va_count] = data
-        validation[1][va_count] = mrl
+        validating[0][va_count] = data
+        validating[1][va_count] = mrl
 
         va_count += 1
 
+    return validating, index_list
 
-    te_count = 0
+def assign_testing(encoded_data: tuple[np.ndarray, np.ndarray], index_list: list[float]) -> tuple[tuple[np.ndarray, np.ndarray], list[int]]:
 
-    for index in testing_indexes:
+    testing_num = len(index_list)
+
+    print(testing_num, "Testing indexes found.")
+
+    testing = (np.zeros((testing_num, 4, 50)), np.zeros(testing_num))
+
+
+    va_count = 0
+
+    for index in index_list:
 
         data = encoded_data[0][index]
         mrl = encoded_data[1][index]
 
-        testing[0][te_count] = data
-        testing[1][te_count] = mrl
+        testing[0][va_count] = data
+        testing[1][va_count] = mrl
 
-        te_count += 1
+        va_count += 1
 
-    print("Data fully split.")
-
-    return (training, validation, testing)
+    return testing
 
 
 
