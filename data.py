@@ -3,6 +3,7 @@ This will be used to load and also encode the sequences
 """
 import numpy as np
 import random
+import torch
 
 
 def read_utr_mrl(filename: str) -> dict[str, float]:
@@ -65,9 +66,9 @@ def encode_sequence(utr_mrl_dict: dict[str, float]) -> tuple[np.ndarray, np.ndar
     num_seq = len(utr_mrl_dict)
 
     # maybe add to np.zeros((num_seq, 4, 50), dtype=np.float32), same for mrl_array
-    encoded_arrays = np.zeros((num_seq, 4, 50))
+    encoded_arrays = np.zeros((num_seq, 4, 50), dtype=np.float32)
 
-    mrl_array = np.zeros((num_seq))
+    mrl_array = np.zeros((num_seq), dtype=np.float32)
 
     count = 0
 
@@ -89,6 +90,9 @@ def encode_sequence(utr_mrl_dict: dict[str, float]) -> tuple[np.ndarray, np.ndar
 
 
 def assign_data(encoded_data: tuple[np.ndarray, np.ndarray]) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
+    """
+    This function will take a seed and get a bunch of indexes at proportions for testing, validating, and training. It will then use the indexes to randomly pull the encoded data and assign it to each group. Then, a tuple of each group will be returned   
+    """
 
     num_seq = len(encoded_data[0])
 
@@ -201,14 +205,55 @@ def assign_data(encoded_data: tuple[np.ndarray, np.ndarray]) -> tuple[tuple[np.n
 
 
 
-def data_to_tensors(data: tuple[np.ndarray, np.ndarray]):
-    pass
+def data_to_tensors(data: tuple[np.ndarray, np.ndarray]) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    This function will transform the numpy array data into pytorch tensors
+    """
+
+    sequences = data[0]
+    mrls = data[1]
+
+    sequence_tensor = torch.from_numpy(sequences).float()
+    mrl_tensor = torch.from_numpy(mrls).float()
+
+    print("Tensors made.")
+
+    return sequence_tensor, mrl_tensor
+
+
+
+def make_batches(data: tuple[torch.Tensor, torch.Tensor]) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """
+    This takes the tensors for utrs and mrls and splits them up into batches of 128
+    """
+
+    batch_size = 128
+
+    sequences = data[0]
+    mrls = data[1]
+
+    num_sequences = len(sequences)
+
+    index_list = list(range(num_sequences))
+
+    batch_list = []
+
+    for i in range(0, num_sequences, batch_size):
+
+        batch_indexes = index_list[i:(i + batch_size)]
+
+        sequence_batch = sequences[batch_indexes]
+
+        mrl_batch = mrls[batch_indexes]
+
+        batch_list.append((sequence_batch, mrl_batch))
+
+    print("Batches list made.")
+
+    return batch_list
+
 
 
 if __name__ == "__main__":
 
-    d = read_utr_mrl("data/GSM3130435_egfp_unmod_1.csv")
-
-    e = encode_sequence(d)
-
-    assign_data(e)
+    pass
