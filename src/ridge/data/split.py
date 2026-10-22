@@ -1,17 +1,18 @@
-"""Fixed coverage-based splits and manifests matched by source_row and utr."""
+"""CNN-compatible random 80/10/10 splits and reusable sample manifests."""
 
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import random
 from tempfile import TemporaryDirectory
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 _NAMES = ("train", "val", "test")
 _DATA_COLUMNS = ["source_row", "utr", "rl", "total_reads"]
-_SORT_ORDER = "total_reads descending, source_row ascending"
+_SORT_ORDER = "source_row ascending"
+_SPLIT_METHOD = "cnn_random_80_10_10"
 
 
 @dataclass
@@ -26,20 +27,30 @@ def create_splits(
     df: pd.DataFrame,
     *,
     seed: int = 42,
-    n_total: int = 280_000,
-    n_test: int = 20_000,
-    val_fraction: float = 0.1,
 ) -> DataSplits:
-    """Benchmark split of cleaned data: fixed test, random train/validation."""
-    if not 0 < n_test < n_total <= len(df):
-        raise ValueError("Require 0 < n_test < n_total <= number of cleaned rows")
-    selected = df.sort_values(["total_reads", "source_row"], ascending=[False, True]).iloc[:n_total]
-    test, pool = selected.iloc[:n_test], selected.iloc[n_test:]
-    train, val = train_test_split(pool, test_size=float(val_fraction), random_state=seed)
+    """Split all cleaned rows using the CNN's sequential random-pop algorithm.
+
+    Restore CSV order before sampling. Train and validation each restart
+    random.Random(seed); their sizes are floor(0.8*N) and floor(0.1*N).
+    Test keeps the remaining indices in CSV order. Matching CNN membership
+    requires the same sequence pool (cleaning must not remove/change samples).
+    """
+    selected = df.sort_values("source_row")
+    remaining = list(range(len(selected)))
+    sampled = []
+    for fraction in (0.8, 0.1):
+        rng = random.Random(seed)
+        indices = [
+            remaining.pop(rng.randint(0, len(remaining) - 1))
+            for _ in range(int(len(selected) * fraction))
+        ]
+        sampled.append(selected.iloc[indices])
+    train, val = sampled
+    test = selected.iloc[remaining]
     counts = {name: len(part) for name, part in zip(_NAMES, (train, val, test))}
     metadata = {
-        "schema_version": 1, "mode": "benchmark", "seed": int(seed),
-        "n_total": int(n_total), "n_test": int(n_test), "val_fraction": float(val_fraction),
+        "schema_version": 2, "mode": "benchmark", "seed": int(seed),
+        "split_method": _SPLIT_METHOD, "train_fraction": 0.8, "val_fraction": 0.1,
         "input_rows": len(df), "counts": counts, "sort_order": _SORT_ORDER,
     }
     return DataSplits(*(part.reset_index(drop=True).copy() for part in (train, val, test)), metadata)
@@ -55,9 +66,12 @@ def save_split_manifest(
     parts = {name: getattr(splits, name) for name in _NAMES}
     if (
         splits.metadata["mode"] != "benchmark"
+        or splits.metadata["schema_version"] != 2
+        or splits.metadata.get("split_method") != _SPLIT_METHOD
+        or splits.metadata["sort_order"] != _SORT_ORDER
         or {name: len(part) for name, part in parts.items()} != splits.metadata["counts"]
     ):
-        raise ValueError("Expected benchmark splits with matching metadata counts")
+        raise ValueError("Expected CNN 80/10/10 splits with matching metadata counts")
     manifest = pd.concat([
         part[_DATA_COLUMNS].assign(split=name, position=range(len(part)))
         for name, part in parts.items()
@@ -94,16 +108,17 @@ def load_split_manifest(df: pd.DataFrame, path: str | Path) -> DataSplits:
     """Restore saved order without splitting again; check selected sample values.
 
     Expect clean_data() output; match source_row, utr, rl, total_reads and row count.
-    Unselected rows and extra-column contents are not fingerprinted or compared.
+    Extra-column contents are not fingerprinted or compared.
     """
     path = Path(path)
     metadata = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
     if (
         metadata["mode"] != "benchmark"
-        or metadata["schema_version"] != 1
+        or metadata["schema_version"] != 2
+        or metadata.get("split_method") != _SPLIT_METHOD
         or metadata["sort_order"] != _SORT_ORDER
     ):
-        raise ValueError("Expected a benchmark manifest with supported schema and sort_order")
+        raise ValueError("Expected a CNN 80/10/10 manifest (schema 2); regenerate old splits")
     source_rows = metadata.pop("source_rows")
     if len(df) != metadata["input_rows"]:
         raise ValueError("Input row count differs from the saved dataset")
