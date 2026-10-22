@@ -9,7 +9,7 @@ def main():
     arrays = encode_sequence(seq_dict)
     training, analyzing, testing = assign_data(arrays)
     training_tensors = data_to_tensors(training)
-    training_batches1 = make_batches(training_tensors)
+    training_batches = make_batches(training_tensors)
     d1_end = time.perf_counter()
 
     print("Time taken by data.py:", (d1_end - d1_start))
@@ -19,8 +19,8 @@ def main():
 
     model = CNN()
 
-    sequences = training_batches1[0][0]
-    mrls = training_batches1[0][1]
+    sequences = training_batches[0][0]
+    mrls = training_batches[0][1]
 
     output_vals = model(sequences)
 
