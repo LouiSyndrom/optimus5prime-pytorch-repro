@@ -1,12 +1,14 @@
 """Evaluate a saved Optimus 5-Prime CNN and interpret first-layer filter motifs.
 
 Run from the project folder: python evaluate.py
-Requires your updated model.py, data.py, the original CSV, and best_model.pth.
+Requires your updated model.py, data.py, the original CSV, and outcomes/best_model.pth.
+Optional: outcomes/training_history.csv for epoch-by-epoch learning curves.
 No retraining or checkpoint overwriting occurs.
 """
 
 from pathlib import Path
 import heapq
+import csv
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,6 +24,7 @@ from model import CNN
 
 DATA_FILE = "data/GSM3130435_egfp_unmod_1.csv"
 CHECKPOINT = "outcomes/best_model.pth"
+HISTORY_FILE = "outcomes/training_history.csv"
 BATCH_SIZE = 128
 FILTER_INDEX = 0         # Zero-based: 0 means the first of 120 filters
 TOP_N = 1000            # One strongest 8-nt window per input sequence
@@ -91,6 +94,49 @@ def plot_predictions(actual, pred, mse, pearson):
            title="CNN Prediction Residuals")
     fig.tight_layout()
     fig.savefig(OUTCOMES_DIR / "mrl_residuals.png", dpi=300)
+
+
+
+def plot_training_history(history_file=HISTORY_FILE):
+    """Plot epoch-by-epoch training and validation R² and MSE from a CSV.
+
+    Expected CSV columns: epoch, train_r2, val_r2, train_mse, val_mse.
+    A saved model checkpoint alone cannot reconstruct earlier epochs.
+    """
+    path = Path(history_file)
+    if not path.is_file():
+        print(f"\nTraining history not found: {path}")
+        print("Skipping learning-curve plots. Save epoch metrics from train.py "
+              "to this CSV to generate them.")
+        return
+
+    required = ("epoch", "train_r2", "val_r2", "train_mse", "val_mse")
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
+        if not reader.fieldnames or any(name not in reader.fieldnames for name in required):
+            raise ValueError(f"{path} must have columns: {', '.join(required)}")
+        rows = list(reader)
+
+    if not rows:
+        print(f"Training history file is empty: {path}")
+        return
+
+    epochs = np.array([float(row["epoch"]) for row in rows])
+    for metric, ylabel, filename in (
+        ("r2", "R² score", "model_r2.png"),
+        ("mse", "Mean squared error", "model_mse.png"),
+    ):
+        train = np.array([float(row[f"train_{metric}"]) for row in rows])
+        validation = np.array([float(row[f"val_{metric}"]) for row in rows])
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(epochs, train, label="Train")
+        ax.plot(epochs, validation, label="Validation")
+        ax.set(xlabel="Epoch", ylabel=ylabel, title=f"Model {metric.upper()} by Epoch")
+        ax.legend()
+        ax.grid(alpha=0.25)
+        fig.tight_layout()
+        fig.savefig(OUTCOMES_DIR / filename, dpi=300)
+        print(f"Saved {OUTCOMES_DIR / filename}")
 
 
 def top_activating_windows(model, training_tensors, device, filter_index=0, top_n=1000):
@@ -209,6 +255,7 @@ def main():
     pred, actual = predict_on_test(model, testing_tensors, device)
     mse, pearson = print_metrics(actual, pred)
     plot_predictions(actual, pred, mse, pearson)
+    plot_training_history()
 
     plot_filter_weights(model, FILTER_INDEX)
     windows = top_activating_windows(model, training_tensors, device,

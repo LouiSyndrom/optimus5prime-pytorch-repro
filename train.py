@@ -1,6 +1,7 @@
 """
 This is going to be used to train and save the CNN
 """
+import csv
 import torch
 from model import CNN
 from data import make_batches
@@ -20,9 +21,43 @@ OUTCOMES_DIR = Path(__file__).resolve().parent / "outcomes"
 OUTCOMES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def evaluate_metrics(model, tensors, batch_size=128):
+    """Compute dataset-wide MSE and R² using the current model weights."""
+    sequences, mrls = tensors
+    model.eval()
+    squared_error = 0.0
+    label_sum = 0.0
+    label_squared_sum = 0.0
+    total_samples = 0
+
+    with torch.inference_mode():
+        for start in range(0, len(mrls), batch_size):
+            batch_sequences = sequences[start:start + batch_size].to(device)
+            batch_mrls = mrls[start:start + batch_size].to(device).reshape(-1)
+            predictions = model(batch_sequences).reshape(-1)
+
+            actual = batch_mrls.double()
+            predicted = predictions.double()
+            squared_error += ((predicted - actual) ** 2).sum().item()
+            label_sum += actual.sum().item()
+            label_squared_sum += (actual ** 2).sum().item()
+            total_samples += actual.numel()
+
+    if total_samples == 0:
+        raise ValueError("Cannot evaluate an empty dataset")
+
+    mse = squared_error / total_samples
+    ss_total = label_squared_sum - (label_sum ** 2 / total_samples)
+    r2 = 1 - squared_error / ss_total if ss_total > 0 else float("nan")
+    return mse, r2
+
+
 def run_epochs(model: CNN, optimizer: torch.optim.Adam, training_tensors: tuple[torch.Tensor, torch.Tensor], analyzing_tensors: tuple[torch.Tensor, torch.Tensor], num_epochs: int):
     
-    count = 0
+    history_path = OUTCOMES_DIR / "training_history.csv"
+    with history_path.open("w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["epoch", "train_r2", "val_r2", "train_mse", "val_mse"])
 
     best_validation_loss = float("inf")
 
@@ -54,6 +89,18 @@ def run_epochs(model: CNN, optimizer: torch.optim.Adam, training_tensors: tuple[
         print(f"Epoch {epoch+1} completed. Average Loss: {average_loss:.4f}")
 
         average_validation_loss = analyze(model, analyzing_tensors, epoch)
+
+
+        training_mse, training_r2 = evaluate_metrics(model, training_tensors)
+        validation_mse, validation_r2 = evaluate_metrics(model, analyzing_tensors)
+
+        with history_path.open("a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([epoch + 1, training_r2, validation_r2,
+                             training_mse, validation_mse])
+
+        print(f"Train R²: {training_r2:.4f}, Validation R²: {validation_r2:.4f} | "
+              f"Train MSE: {training_mse:.4f}, Validation MSE: {validation_mse:.4f}")
 
         if average_validation_loss < best_validation_loss:
 
