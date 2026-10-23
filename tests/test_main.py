@@ -8,7 +8,7 @@ import pytest
 from sklearn.linear_model import Ridge
 
 # Load the standalone entry point without depending on pytest's import path.
-program = runpy.run_path(Path(__file__).resolve().parents[1] / "main.py")
+program = runpy.run_path(Path(__file__).resolve().parents[1] / "main_ridge.py")
 regression_metrics = program["regression_metrics"]
 select_alpha = program["select_alpha"]
 
@@ -17,7 +17,7 @@ def test_alpha_search_keeps_best_train_only_model():
     X = np.eye(4, dtype=np.float32)[[0, 1, 0, 1]][:, None, :]
     y_train = np.array([0, 2, 0, 2], dtype=np.float32)
     y_val = np.array([0.9, 1.1, 0.9, 1.1], dtype=np.float32)
-    model = select_alpha(X, y_train, X, y_val, [0.01, 18.0, 1000.0])
+    model, _ = select_alpha(X, y_train, X, y_val, [0.01, 18.0, 1000.0])
 
     assert model.estimator.alpha == 18.0  # Best candidate is neither first nor last.
     reference = Ridge(alpha=18.0).fit(X.reshape(4, 4), y_train)
