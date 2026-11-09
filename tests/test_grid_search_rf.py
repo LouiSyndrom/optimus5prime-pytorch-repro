@@ -10,7 +10,7 @@ import pytest
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV, ParameterGrid, PredefinedSplit
 
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.models.sklearn_adapter import SklearnAdapter
 
 
 def _load_program(monkeypatch):

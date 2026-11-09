@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestRegressor
 
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.models.sklearn_adapter import SklearnAdapter
 
 
 # Load the standalone entry point without running real-data training.

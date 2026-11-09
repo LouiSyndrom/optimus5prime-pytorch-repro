@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from sklearn.linear_model import Ridge
 
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.models.sklearn_adapter import SklearnAdapter
 
 
 def _sample_data():

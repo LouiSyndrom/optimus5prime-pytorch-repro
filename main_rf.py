@@ -7,10 +7,10 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 
-from ridge.data.encoding import one_hot_encode
-from ridge.data.io import clean_data, load_data
-from ridge.data.split import create_splits
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.data.encoding import one_hot_encode
+from ml.data.io import clean_data, load_data
+from ml.data.split import create_splits
+from ml.models.sklearn_adapter import SklearnAdapter
 
 # Edit the run configuration here.
 DATA_PATH = Path(__file__).resolve().parent / "data/raw/GSM3130435_egfp_unmod_1.csv"

@@ -11,10 +11,10 @@ from sklearn.metrics import get_scorer
 from sklearn.model_selection import GridSearchCV, ParameterGrid, PredefinedSplit
 
 from main_rf import regression_metrics
-from ridge.data.encoding import one_hot_encode
-from ridge.data.io import clean_data, load_data
-from ridge.data.split import create_splits
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.data.encoding import one_hot_encode
+from ml.data.io import clean_data, load_data
+from ml.data.split import create_splits
+from ml.models.sklearn_adapter import SklearnAdapter
 
 PARAM_GRID = {
     "n_estimators": [50, 100],

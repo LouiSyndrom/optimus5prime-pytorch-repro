@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ridge.data.encoding import one_hot_encode
-from ridge.data.io import clean_data
+from ml.data.encoding import one_hot_encode
+from ml.data.io import clean_data
 
 
 def test_encoding_values_and_order():

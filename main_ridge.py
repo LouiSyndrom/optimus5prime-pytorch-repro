@@ -11,10 +11,10 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-from ridge.data.encoding import one_hot_encode
-from ridge.data.io import clean_data, load_data
-from ridge.data.split import create_splits
-from ridge.models.sklearn_adapter import SklearnAdapter
+from ml.data.encoding import one_hot_encode
+from ml.data.io import clean_data, load_data
+from ml.data.split import create_splits
+from ml.models.sklearn_adapter import SklearnAdapter
 
 
 def regression_metrics(y_true, predictions):
