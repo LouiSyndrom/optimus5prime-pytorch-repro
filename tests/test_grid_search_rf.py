@@ -65,7 +65,7 @@ def test_grid_uses_existing_validation_split_and_selects_lowest_rmse(monkeypatch
     assert search.best_index_ == np.argmax(search.cv_results_["mean_test_score"])
 
 
-def test_cli_refits_only_training_rows_and_saves_validation_artifacts(tmp_path, monkeypatch):
+def test_cli_refits_only_training_rows_and_saves_validation_artifacts(tmp_path, monkeypatch, capsys):
     program = _load_program(monkeypatch)
     namespace = program["main"].__globals__
     rng = np.random.default_rng(29)
@@ -82,12 +82,18 @@ def test_cli_refits_only_training_rows_and_saves_validation_artifacts(tmp_path, 
     splits = {"train": train, "val": val, "test": test}
     param_grid = {
         "n_estimators": [5], "max_depth": [2, 4],
-        "min_samples_leaf": [1, 2], "max_features": [1.0],
+        "min_samples_leaf": [1, 2], "max_features": [1.0], "max_leaf_nodes": [8],
     }
     monkeypatch.setitem(namespace, "PARAM_GRID", param_grid)
     encoded, fit_inputs, checkpoint_sizes = {}, [], []
     original_encode = namespace["one_hot_encode"]
     original_fit = RandomForestRegressor.fit
+    baseline = SklearnAdapter(RandomForestRegressor(n_estimators=3, random_state=42))
+    baseline.fit(original_encode(train["utr"].tolist()), train["rl"].to_numpy(dtype="float32"))
+    baseline_path = tmp_path / "previous.joblib"
+    baseline.save(baseline_path)
+    baseline_predictions = baseline.predict(original_encode(val["utr"].tolist()))
+    previous_rmse = np.sqrt(np.mean((val["rl"].to_numpy(dtype="float32") - baseline_predictions) ** 2))
 
     def record_encode(values, *args, **kwargs):
         values = list(values)
@@ -117,7 +123,7 @@ def test_cli_refits_only_training_rows_and_saves_validation_artifacts(tmp_path, 
     monkeypatch.setattr(sys, "argv", [
         "grid_search_rf.py", "--data-path", str(data_path),
         "--split-seed", "42", "--model-seed", "23", "--n-jobs", "1",
-        "--output-dir", str(output_dir),
+        "--output-dir", str(output_dir), "--baseline-model", str(baseline_path),
     ])
     program["main"]()
 
@@ -147,10 +153,10 @@ def test_cli_refits_only_training_rows_and_saves_validation_artifacts(tmp_path, 
     np.testing.assert_allclose(predictions["prediction"], restored.predict(encoded["val"]))
     rmse = np.sqrt(np.mean((predictions["prediction"] - val["rl"].to_numpy(dtype="float32")) ** 2))
     assert rmse == pytest.approx(best_row["validation_rmse"])
-    summary = (output_dir / "summary.txt").read_text(encoding="utf-8")
-    assert "search: GridSearchCV" in summary
-    assert f"candidates: {len(ParameterGrid(param_grid))}" in summary
-    assert "best_params:" in summary
-    assert "test_evaluated: False" in summary
-    assert all(column in summary for column in ("pearson_r_squared", "rmse"))
-    assert any("validation" in line.split() for line in summary.splitlines())
+    lines = (output_dir / "summary.txt").read_text(encoding="utf-8").splitlines()
+    assert [line.split(":")[0] for line in lines] == ["Parameters", "Training samples", "Validation", "Test"]
+    assert "max_leaf_nodes=8" in lines[0]
+    assert lines[1] == f"Training samples: {len(train)}"
+    assert lines[2].startswith(f"Validation: n={len(val)}, RMSE {rmse:.6f}, Pearson r ")
+    assert lines[3] == "Test: not evaluated"
+    assert f"Previous model validation: RMSE {previous_rmse:.6f}" in capsys.readouterr().out

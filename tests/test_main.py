@@ -2,8 +2,10 @@
 
 from pathlib import Path
 import runpy
+import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.linear_model import Ridge
 
@@ -35,3 +37,33 @@ def test_pearson_and_rmse():
     constant = regression_metrics([1, 2, 3], [2, 2, 2])
     assert np.isnan(constant["pearson_r"])
     assert np.isnan(constant["pearson_r_squared"])
+
+
+@pytest.mark.parametrize("smoke", [False, True], ids=["full", "validation-only"])
+def test_ridge_outputs_shared_summary(tmp_path, monkeypatch, smoke):
+    rng = np.random.default_rng(42)
+    sequences = ["".join(row) for row in rng.choice(list("ACGT"), size=(50, 50))]
+    data_path = tmp_path / "data.csv"
+    pd.DataFrame({"utr": sequences, "rl": np.arange(50), "total_reads": 100}).to_csv(
+        data_path, index=False,
+    )
+    output = tmp_path / "results"
+    root = Path(__file__).resolve().parents[1]
+    script = root / ("scripts/smoke_test_ridge.py" if smoke else "main_ridge.py")
+    options = ["--n-samples", "50", "--alpha", "0.5"] if smoke else ["--alphas", "0.5"]
+    monkeypatch.setattr(sys, "argv", [
+        str(script), "--data-path", str(data_path), "--output-dir", str(output), *options,
+    ])
+    runpy.run_path(str(script), run_name="__main__")
+
+    lines = (output / "summary.txt").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 4
+    assert lines[:2] == ["Parameters: alpha=0.5", "Training samples: 40"]
+    for split, line in zip(("validation", "test"), lines[2:]):
+        if smoke and split == "test":
+            assert line == "Test: not evaluated"
+            continue
+        frame = pd.read_csv(output / f"{split}_predictions.csv")
+        errors = frame["prediction"].to_numpy(dtype="float32").astype(float) - frame["rl"]
+        rmse = np.sqrt(np.mean(errors ** 2))
+        assert line.startswith(f"{split.title()}: n=5, RMSE {rmse:.6f},")

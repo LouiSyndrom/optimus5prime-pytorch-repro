@@ -179,16 +179,11 @@ def test_entrypoint_fits_fixed_parameters_once_and_delays_test_until_save(
     assert events.index("fit_complete") < events.index("saved") < events.index("predict_val")
     assert events.index("saved") < events.index("encode_test") < events.index("predict_test")
     assert events.count("predict_val") == events.count("predict_test") == 1
-    summary = (output_dir / "summary.txt").read_text(encoding="utf-8")
-    assert "model_params:" in summary
-    assert "seed: 23" in summary
-    assert "used_rows:" in summary
-    assert all(column in summary for column in ("split", "pearson_r_squared", "pearson_r", "rmse"))
-    assert any(line.split()[0] == "validation" for line in summary.splitlines() if line.split())
-    assert all(detail not in summary for detail in (
-        "candidate_results:", "fit_seconds:", "model_config:", "cleaning_removed:",
-        "reload_predictions_match:", "validation_metrics:", "test_metrics:",
-    ))
+    lines = (output_dir / "summary.txt").read_text(encoding="utf-8").splitlines()
+    assert [line.split(":")[0] for line in lines] == ["Parameters", "Training samples", "Validation", "Test"]
+    assert "n_estimators=100" in lines[0] and "min_samples_leaf=20" in lines[0]
+    assert lines[1] == "Training samples: 64"
+    assert lines[2].startswith("Validation: n=8, RMSE ")
     assert {path.name for path in output_dir.iterdir()} == {
         "random_forest.joblib", "test_predictions.csv", "summary.txt",
     }
@@ -196,7 +191,11 @@ def test_entrypoint_fits_fixed_parameters_once_and_delays_test_until_save(
     assert output_predictions["utr"].tolist() == test["utr"].tolist()
     assert np.isfinite(output_predictions["prediction"]).all()
     np.testing.assert_array_equal(output_predictions["source_row"], test["source_row"])
-    assert any(line.split()[0] == "test" for line in summary.splitlines() if line.split())
+    y_test = test["rl"].to_numpy(dtype="float32").astype(float)
+    rmse = np.sqrt(np.mean((y_test - output_predictions["prediction"]) ** 2))
+    baseline_rmse = np.sqrt(np.mean((y_test - expected_y.mean(dtype=float)) ** 2))
+    assert lines[3].startswith(f"Test: n=8, RMSE {rmse:.6f}, Pearson r ")
+    assert lines[3].endswith(f"training-mean baseline RMSE {baseline_rmse:.6f}")
 
     restored = SklearnAdapter.load(output_dir / "random_forest.joblib")
     assert restored.get_config() == saved["model"].get_config()

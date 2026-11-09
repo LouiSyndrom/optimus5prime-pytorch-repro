@@ -1,14 +1,11 @@
 """Adapt a single-target sklearn regressor to the shared One-Hot input."""
 
-import platform
 from pathlib import Path
 
 import joblib
 import numpy as np
-import sklearn
 from sklearn.utils.validation import check_is_fitted
 
-_SCHEMA_VERSION = 1
 _FEATURES = {
     "encoding": "one_hot",
     "base_order": "ACGT",
@@ -28,14 +25,12 @@ class SklearnAdapter:
     """Flatten sequence features without scaling or selecting hyperparameters."""
 
     def __init__(self, estimator, *, sequence_length: int = 50):
-        if sequence_length <= 0:
-            raise ValueError("sequence_length must be positive")
         self.estimator = estimator
         self.sequence_length = sequence_length
 
     def _flatten(self, X):
         X = np.asarray(X)
-        if X.ndim != 3 or X.shape[1:] != (self.sequence_length, 4):
+        if X.shape[1:] != (self.sequence_length, 4):
             raise ValueError(f"X must have shape (N, {self.sequence_length}, 4)")
         # Explicit width also supports an empty validation set.
         return X.reshape(X.shape[0], 4 * self.sequence_length, order="C")
@@ -52,11 +47,9 @@ class SklearnAdapter:
 
         Optional validation inputs are checked for pairing and shape only.
         """
-        if (X_val is None) != (y_val is None):
-            raise ValueError("X_val and y_val must be supplied together")
         X_flat = self._flatten(X)
         y = _validate_vector(y, X_flat.shape[0], "y")
-        if X_val is not None:
+        if X_val is not None or y_val is not None:
             val_flat = self._flatten(X_val)
             _validate_vector(y_val, val_flat.shape[0], "y_val")
         self.estimator.fit(X_flat, y)
@@ -82,32 +75,18 @@ class SklearnAdapter:
     def save(self, path: str | Path) -> None:
         """Save a fitted estimator together with its feature conventions."""
         check_is_fitted(self.estimator)
-        package = {
-            "schema_version": _SCHEMA_VERSION,
-            "estimator": self.estimator,
-            **self.get_config(),
-            "software_versions": {
-                "python": platform.python_version(),
-                "numpy": np.__version__,
-                "scikit-learn": sklearn.__version__,
-                "joblib": joblib.__version__,
-            },
-        }
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(package, path)
+        joblib.dump({"estimator": self.estimator, **self.get_config()}, path)
 
     @classmethod
     def load(cls, path: str | Path) -> "SklearnAdapter":
         """Load only trusted joblib files; cross-version compatibility is not guaranteed."""
         package = joblib.load(path)
-        if (
-            package["schema_version"] != _SCHEMA_VERSION
-            or any(package[key] != value for key, value in _FEATURES.items())
+        estimator = package["estimator"]
+        length = package["sequence_length"]
+        if estimator.n_features_in_ != 4 * length or any(
+            package[key] != value for key, value in _FEATURES.items()
         ):
-            raise ValueError("Incompatible model schema or feature conventions")
-
-        model = cls(package["estimator"], sequence_length=package["sequence_length"])
-        if getattr(model.estimator, "n_features_in_", None) != 4 * model.sequence_length:
-            raise ValueError("Model feature count does not match sequence_length")
-        return model
+            raise ValueError("Saved model has incompatible sequence features")
+        return cls(estimator, sequence_length=length)

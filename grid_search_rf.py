@@ -82,17 +82,16 @@ def main():
     train, val, test = create_splits(cleaned, seed=args.split_seed)
     if len(train) < 2 or len(val) < 2:
         parser.error("At least two training and validation rows are required")
-    test_rows = len(test)
     del test, cleaned
     X_train = one_hot_encode(train["utr"].tolist())
     y_train = train["rl"].to_numpy(dtype="float32")
     X_val = one_hot_encode(val["utr"].tolist())
     y_val = val["rl"].to_numpy(dtype="float32")
-    metrics = []
     if args.baseline_model is not None:
         baseline = SklearnAdapter.load(args.baseline_model)
-        metrics.append({"model": "previous", "split": "validation",
-                        **regression_metrics(y_val, baseline.predict(X_val))})
+        previous = regression_metrics(y_val, baseline.predict(X_val))
+        print(f"Previous model validation: RMSE {previous['rmse']:.6f}, "
+              f"Pearson r {previous['pearson_r']:.6f}, Pearson r² {previous['pearson_r_squared']:.6f}")
         del baseline
 
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -117,26 +116,21 @@ def main():
     predictions = model.predict(X_val)
     selected_metrics = regression_metrics(y_val, predictions)
     np.testing.assert_allclose(selected_metrics["rmse"], -search.best_score_, rtol=1e-10)
-    metrics.append({"model": "grid_search", "split": "validation", **selected_metrics})
     model.save(args.output_dir / "random_forest.joblib")
     val[["source_row", "utr", "rl"]].assign(prediction=predictions).to_csv(
         args.output_dir / "validation_predictions.csv", index=False,
     )
-    table = pd.DataFrame(metrics).drop(columns="pearson_note")
+    settings = ", ".join(f"{key}={search.best_params_[key]}" for key in PARAM_GRID)
+    train_mean = y_train.mean(dtype=np.float64)
+    baseline_rmse = np.sqrt(np.mean((y_val.astype(float) - train_mean) ** 2))
     summary = (
-        "search: GridSearchCV, one fixed validation split (not K-fold CV)\n"
-        f"data_path: {args.data_path.resolve()}\n"
-        f"split_seed: {args.split_seed}, model_seed: {args.model_seed}\n"
-        f"used_rows: train={len(train)}, validation={len(val)}; held_out_test={test_rows}\n"
-        f"candidates: {count}; forest_threads={args.n_jobs}; concurrent_candidates=1\n"
-        f"grid: {PARAM_GRID}\n"
-        f"best_params: {search.best_params_}\n"
-        "selection: lowest validation RMSE; refit=False; selected model fitted on train only\n"
-        "test_evaluated: False; existing test set was evaluated in an earlier experiment\n\n"
-        + table.to_string(index=False, float_format=lambda value: f"{value:.6f}") + "\n"
+        f"Parameters: {settings}\n"
+        f"Training samples: {len(y_train):,}\n"
+        f"Validation: n={len(y_val):,}, RMSE {selected_metrics['rmse']:.6f}, "
+        f"Pearson r {selected_metrics['pearson_r']:.6f}, Pearson r² {selected_metrics['pearson_r_squared']:.6f}, "
+        f"training-mean baseline RMSE {baseline_rmse:.6f}\n"
+        "Test: not evaluated\n"
     )
-    if any(row["pearson_note"] for row in metrics):
-        summary += "Pearson r/r² is undefined for constant targets or predictions.\n"
     (args.output_dir / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")
     print(f"output_dir: {args.output_dir.resolve()}")

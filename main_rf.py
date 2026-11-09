@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 
@@ -58,23 +57,24 @@ def main():
     # Evaluate validation and test sets, then save test predictions and main metrics.
     val_predictions = model.predict(one_hot_encode(val["utr"].tolist()))
     test_predictions = model.predict(one_hot_encode(test["utr"].tolist()))
-    metrics = [
-        {"split": "validation", **regression_metrics(val["rl"].to_numpy(dtype="float32"), val_predictions)},
-        {"split": "test", **regression_metrics(test["rl"].to_numpy(dtype="float32"), test_predictions)},
-    ]
+    y_val = val["rl"].to_numpy(dtype="float32")
+    y_test = test["rl"].to_numpy(dtype="float32")
     test[["source_row", "utr", "rl"]].assign(prediction=test_predictions).to_csv(
         OUTPUT_DIR / "test_predictions.csv", index=False,
     )
-    model_params = {key: RF_PARAMS[key] for key in ("n_estimators", "max_depth", "min_samples_leaf", "max_features")}
-    table = pd.DataFrame(metrics).drop(columns="pearson_note")
-    summary = (
-        f"model_params: {model_params}\n"
-        f"seed: {SEED}\n"
-        f"used_rows: train={len(train)}, val={len(val)}, test={len(test)}\n\n"
-        + table.to_string(index=False, float_format=lambda value: f"{value:.6f}") + "\n"
-    )
-    if any(row["pearson_note"] for row in metrics):
-        summary += "Pearson r/r² is undefined for constant targets or predictions.\n"
+    keys = ("n_estimators", "max_depth", "min_samples_leaf", "max_features")
+    settings = ", ".join(f"{key}={RF_PARAMS[key]}" for key in keys)
+    lines = [f"Parameters: {settings}", f"Training samples: {len(y_train):,}"]
+    train_mean = y_train.mean(dtype=np.float64)
+    for split, labels, predictions in (("Validation", y_val, val_predictions), ("Test", y_test, test_predictions)):
+        metrics = regression_metrics(labels, predictions)
+        baseline_rmse = np.sqrt(np.mean((labels.astype(float) - train_mean) ** 2))
+        lines.append(
+            f"{split}: n={len(labels):,}, RMSE {metrics['rmse']:.6f}, "
+            f"Pearson r {metrics['pearson_r']:.6f}, Pearson r² {metrics['pearson_r_squared']:.6f}, "
+            f"training-mean baseline RMSE {baseline_rmse:.6f}"
+        )
+    summary = "\n".join(lines) + "\n"
     (OUTPUT_DIR / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")
     print(f"output_dir: {OUTPUT_DIR}")

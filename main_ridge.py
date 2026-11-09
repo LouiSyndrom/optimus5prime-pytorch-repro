@@ -1,9 +1,7 @@
 """Train Ridge and report Pearson r² as in the paper; select alpha by validation RMSE."""
 
 import argparse
-from importlib.metadata import version
 from pathlib import Path
-import platform
 from time import perf_counter
 
 import numpy as np
@@ -62,12 +60,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("results/ridge"))
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    run_start = perf_counter()
-
-    raw = load_data(args.data_path)
-    cleaned, qc = clean_data(raw)
-    raw_rows = len(raw)
-    del raw
+    cleaned, _ = clean_data(load_data(args.data_path))
     if len(cleaned) < 20:
         parser.error("At least 20 cleaned rows are needed for train/validation/test metrics")
     train, val, test = create_splits(cleaned, seed=args.seed)
@@ -77,9 +70,7 @@ def main():
     X_val = one_hot_encode(val["utr"].tolist())
     y_val = val["rl"].to_numpy(dtype="float32")
 
-    start = perf_counter()
     model, search = select_alpha(X_train, y_train, X_val, y_val, args.alphas)
-    search_seconds = perf_counter() - start
     search.to_csv(args.output_dir / "alpha_search.csv", index=False)
     val_predictions = model.predict(X_val)
     model.save(args.output_dir / "ridge.joblib")
@@ -90,12 +81,12 @@ def main():
     # Alpha is now fixed. Test data never enters fitting or parameter selection.
     X_test = one_hot_encode(test["utr"].tolist())
     y_test = test["rl"].to_numpy(dtype="float32")
-    start = perf_counter()
     test_predictions = restored.predict(X_test)
-    test_predict_seconds = perf_counter() - start
+    val_metrics = regression_metrics(y_val, val_predictions)
+    test_metrics = regression_metrics(y_test, test_predictions)
     metrics = pd.DataFrame([
-        {"split": "validation", **regression_metrics(y_val, val_predictions)},
-        {"split": "test", **regression_metrics(y_test, test_predictions)},
+        {"split": "validation", **val_metrics},
+        {"split": "test", **test_metrics},
     ])
     metrics.to_csv(args.output_dir / "metrics.csv", index=False)
     for name, part, predictions in [("validation", val, val_predictions), ("test", test, test_predictions)]:
@@ -103,29 +94,18 @@ def main():
             args.output_dir / f"{name}_predictions.csv", index=False,
         )
 
-    versions = ", ".join(f"{name}={version(name)}" for name in ("numpy", "pandas", "scikit-learn", "joblib"))
-    summary = (
-        "run_type: full_data_regression\n"
-        "primary_metric: pearson_r_squared = corr(rl, prediction)^2 (paper definition)\n"
-        f"data_path: {args.data_path.resolve()}\n"
-        f"raw_rows: {raw_rows}, cleaned_rows: {len(cleaned)}\n"
-        f"qc: {qc}\n"
-        f"seed: {args.seed}, split_method: CNN random 80/10/10\n"
-        f"split_counts: train={len(train)}, val={len(val)}, test={len(test)}\n"
-        "features: utr, one_hot (50,4), ACGT, flatten C, float32\n"
-        "target: rl, original MRL; no feature or target scaling\n"
-        f"alphas: {args.alphas}, selection: lowest validation RMSE (ties keep first)\n"
-        f"best_alpha: {model.estimator.alpha}, fit_scope: train only\n"
-        f"model_config: {model.get_config()}\n"
-        f"search_seconds: {search_seconds:.3f}, total_fit_seconds: {search['fit_seconds'].sum():.3f}\n"
-        f"test_predict_seconds: {test_predict_seconds:.3f}, run_seconds: {perf_counter() - run_start:.3f}\n"
-        "reload_predictions_match: True; test evaluated after alpha selection\n"
-        f"python: {platform.python_version()}, {versions}\n\n"
-        + metrics.to_string(index=False) + "\n"
-    )
+    train_mean = y_train.mean(dtype=np.float64)
+    lines = [f"Parameters: alpha={model.estimator.alpha}", f"Training samples: {len(y_train):,}"]
+    for split, labels, scores in (("Validation", y_val, val_metrics), ("Test", y_test, test_metrics)):
+        baseline_rmse = np.sqrt(np.mean((labels.astype(float) - train_mean) ** 2))
+        lines.append(
+            f"{split}: n={len(labels):,}, RMSE {scores['rmse']:.6f}, "
+            f"Pearson r {scores['pearson_r']:.6f}, Pearson r² {scores['pearson_r_squared']:.6f}, "
+            f"training-mean baseline RMSE {baseline_rmse:.6f}"
+        )
+    summary = "\n".join(lines) + "\n"
     (args.output_dir / "summary.txt").write_text(summary, encoding="utf-8")
-    print("\nPrimary metric: Pearson r² (paper definition); alpha selection: validation RMSE")
-    print(f"Selected alpha: {model.estimator.alpha}\n{metrics.to_string(index=False)}")
+    print(summary, end="")
     print(f"Output: {args.output_dir.resolve()}")
 
 

@@ -50,10 +50,8 @@ def test_ridge_learns_an_additive_signal():
 def test_validation_is_checked_but_not_used_for_training():
     X, y = _sample_data()
     model = SklearnAdapter(Ridge(), sequence_length=4)
-    with pytest.raises(ValueError, match="together"):
+    with pytest.raises(ValueError):
         model.fit(X, y, X_val=X)
-    with pytest.raises(ValueError, match="together"):
-        model.fit(X, y, y_val=y)
     with pytest.raises(ValueError, match="y_val"):
         model.fit(X, y, X_val=X, y_val=y[:-1])
 
@@ -87,11 +85,11 @@ def test_save_load_and_config(tmp_path):
     np.testing.assert_allclose(restored.predict(X), model.predict(X))
     assert restored.get_config() == config
     package = joblib.load(path)
-    assert package["schema_version"] == 1
+    assert "schema_version" not in package
+    assert "software_versions" not in package
     assert package["base_order"] == "ACGT"
     assert package["flatten_order"] == "C"
     assert package["target_unit"] == "MRL"
-    assert {"python", "numpy", "scikit-learn", "joblib"} <= package["software_versions"].keys()
 
 
 def test_load_rejects_incompatible_metadata(tmp_path):
@@ -100,17 +98,12 @@ def test_load_rejects_incompatible_metadata(tmp_path):
     SklearnAdapter(Ridge(), sequence_length=4).fit(X, y).save(path)
     package = joblib.load(path)
 
-    package["schema_version"] = 999
+    package["flatten_order"] = "F"
     joblib.dump(package, path)
-    with pytest.raises(ValueError, match="schema"):
-        SklearnAdapter.load(path)
-
-    package["schema_version"], package["flatten_order"] = 1, "F"
-    joblib.dump(package, path)
-    with pytest.raises(ValueError, match="feature conventions"):
+    with pytest.raises(ValueError, match="incompatible sequence features"):
         SklearnAdapter.load(path)
 
     package["flatten_order"], package["sequence_length"] = "C", 5
     joblib.dump(package, path)
-    with pytest.raises(ValueError, match="feature count"):
+    with pytest.raises(ValueError, match="incompatible sequence features"):
         SklearnAdapter.load(path)

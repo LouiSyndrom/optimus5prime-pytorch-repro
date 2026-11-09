@@ -1,9 +1,7 @@
 """Run a small real-data Ridge smoke test, without tuning or test-set scoring."""
 
 import argparse
-from importlib.metadata import version
 from pathlib import Path
-import platform
 
 import numpy as np
 from sklearn.linear_model import Ridge
@@ -23,8 +21,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("results/smoke/ridge"))
     args = parser.parse_args()
 
-    raw = load_data(args.data_path)
-    cleaned, qc = clean_data(raw)
+    cleaned, _ = clean_data(load_data(args.data_path))
     if not 10 <= args.n_samples <= len(cleaned):
         parser.error(f"--n-samples must be between 10 and {len(cleaned)} cleaned rows")
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -52,21 +49,17 @@ def main():
     val[["source_row", "utr", "rl"]].assign(prediction=predictions).to_csv(
         args.output_dir / "validation_predictions.csv", index=False,
     )
-    rmse = float(np.sqrt(np.mean((predictions - y_val) ** 2)))
-    versions = ", ".join(f"{name}={version(name)}" for name in ("numpy", "pandas", "scikit-learn", "joblib"))
+    labels = y_val.astype(float)
+    rmse = np.sqrt(np.mean((labels - predictions) ** 2))
+    baseline_rmse = np.sqrt(np.mean((labels - y_train.mean(dtype=np.float64)) ** 2))
+    constant = np.ptp(labels) == 0 or np.ptp(predictions) == 0
+    r = np.nan if constant else np.corrcoef(labels, predictions)[0, 1]
     summary = (
-        "run_type: smoke\n"
-        f"data_path: {args.data_path.resolve()}\n"
-        f"raw_rows: {len(raw)}, cleaned_rows: {len(cleaned)}\n"
-        f"cleaning_removed: {qc['removed']}\n"
-        f"sampled_rows: {len(sampled)}, seed: {args.seed}, alpha: {args.alpha}\n"
-        f"split_counts: train={len(train)}, val={len(val)}, test={len(test)}\n"
-        f"X_train: {X_train.shape}, y_train: {y_train.shape}\n"
-        f"X_val: {X_val.shape}, y_val: {y_val.shape}, predictions: {predictions.shape}\n"
-        f"validation_rmse: {rmse:.6f}\n"
-        "reload_predictions_match: True\n"
-        "test_evaluated: False\n"
-        f"python: {platform.python_version()}, {versions}\n"
+        f"Parameters: alpha={args.alpha}\n"
+        f"Training samples: {len(y_train):,}\n"
+        f"Validation: n={len(labels):,}, RMSE {rmse:.6f}, Pearson r {r:.6f}, "
+        f"Pearson r² {r ** 2:.6f}, training-mean baseline RMSE {baseline_rmse:.6f}\n"
+        "Test: not evaluated\n"
     )
     (args.output_dir / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")
