@@ -109,7 +109,7 @@ def test_direct_run_uses_full_existing_splits_and_exports_validation_rows(
     monkeypatch.chdir(tmp_path)
     search.main()
 
-    output, = results_dir.glob("xgb_search_seed42_*")
+    output = results_dir / main.SEARCH_DIR.name
     assert encoded == [train["utr"].tolist(), val["utr"].tolist()]
     results = pd.read_csv(output / "validation_results.csv")
     assert list(zip(results["n_estimators"], results["max_depth"])) == [
@@ -123,15 +123,22 @@ def test_direct_run_uses_full_existing_splits_and_exports_validation_rows(
     assert rmse == pytest.approx(results["validation_rmse"].min())
     assert not (output / "test_predictions.csv").exists()
 
-    original_summary = (output / "summary.txt").read_bytes()
-    lines = original_summary.decode("utf-8").splitlines()
+    lines = (output / "summary.txt").read_text(encoding="utf-8").splitlines()
     assert [line.split(":")[0] for line in lines] == ["Parameters", "Training samples", "Validation", "Test"]
     assert f"RMSE {rmse:.6f}" in lines[2]
     assert lines[3] == "Test: not evaluated"
+    monkeypatch.setattr(search, "CANDIDATES", [{"n_estimators": 1, "max_depth": 1}])
     search.main()
-    next_output, = set(results_dir.glob("xgb_search_seed42_*")) - {output}
-    assert (next_output / "summary.txt").is_file()
-    assert (output / "summary.txt").read_bytes() == original_summary
+    assert list(results_dir.iterdir()) == [output]
+    rerun = pd.read_csv(output / "validation_results.csv")
+    assert list(zip(rerun["n_estimators"], rerun["max_depth"])) == [(1, 1)]
+    rerun_predictions = pd.read_csv(output / "validation_predictions.csv")["prediction"]
+    assert not np.allclose(rerun_predictions, predictions["prediction"])
+    rerun_rmse = np.sqrt(np.mean((rerun_predictions - val["rl"].to_numpy("float32")) ** 2))
+    assert rerun_rmse == pytest.approx(rerun.loc[0, "validation_rmse"])
+    rerun_summary = (output / "summary.txt").read_text(encoding="utf-8").splitlines()
+    assert rerun_summary[0] == "Parameters: n_estimators=1, max_depth=1"
+    assert f"RMSE {rerun_rmse:.6f}" in rerun_summary[2]
 
 
 @pytest.fixture

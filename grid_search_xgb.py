@@ -1,6 +1,5 @@
 """Select XGBoost parameters on the project's full, fixed validation split."""
 
-from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 
@@ -66,8 +65,8 @@ def main():
     X_train, y_train = xy(train)
     X_val, y_val = xy(val)
     del train
-    output_dir = RESULTS_DIR / f"xgb_search_seed{SPLIT_SEED}_{datetime.now():%Y%m%d_%H%M%S_%f}"
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir = RESULTS_DIR / f"xgb_search_seed{SPLIT_SEED}"
+    output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Full train={len(y_train)}, validation={len(y_val)}, held-out test={test_rows}", flush=True)
 
     best_model, results = search_candidates(

@@ -1,126 +1,105 @@
-"""Exhaustive RF search on the existing validation split, without reusing the test set."""
+"""Select Random Forest parameters on the project's full, fixed validation split."""
 
-import argparse
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import get_scorer
-from sklearn.model_selection import GridSearchCV, ParameterGrid, PredefinedSplit
 
-from main_rf import regression_metrics
+from main_rf import DATA_PATH as DEFAULT_DATA_PATH
+from main_rf import RF_PARAMS, regression_metrics
 from ml.data.encoding import one_hot_encode
 from ml.data.io import clean_data, load_data
 from ml.data.split import create_splits
 from ml.models.sklearn_adapter import SklearnAdapter
 
-PARAM_GRID = {
-    "n_estimators": [50, 100],
-    "max_depth": [24, None],
-    "min_samples_leaf": [5, 20],
-    "max_features": [0.6, 1.0],
-}
+# Edit the run configuration here.
+DATA_PATH = DEFAULT_DATA_PATH
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+SPLIT_SEED = 42
+MODEL_SEED = 42
+N_JOBS = 6
+BASELINE_MODEL = None  # Optional path to a previously saved RF model.
+CANDIDATES = (
+    {"n_estimators": 50, "max_depth": 16},
+    {"n_estimators": 100, "max_depth": 16},
+    {"n_estimators": 50, "max_depth": 24},
+    {"n_estimators": 100, "max_depth": 24},
+)
 
 
-def search_random_forest(
-    X_train, y_train, X_val, y_val, param_grid, *, model_seed=42, n_jobs=6, verbose=2,
-    checkpoint_path=None,
+def search_candidates(
+    X_train, y_train, X_val, y_val, *, candidates, model_seed=MODEL_SEED, n_jobs=N_JOBS, output_dir,
 ):
-    """Search one fixed validation split; disable automatic train+validation refitting."""
-    X = np.concatenate([
-        X_train.reshape(len(X_train), -1, order="C"),
-        X_val.reshape(len(X_val), -1, order="C"),
-    ])
-    y = np.concatenate([y_train, y_val])
-    folds = np.concatenate([np.full(len(y_train), -1), np.zeros(len(y_val), dtype=int)])
-    estimator = RandomForestRegressor(
-        criterion="squared_error", max_leaf_nodes=10_000, bootstrap=True,
-        max_samples=0.8, random_state=model_seed, n_jobs=n_jobs,
-    )
-    scoring = "neg_root_mean_squared_error"
-    if checkpoint_path is not None:
-        scorer = get_scorer(scoring)
-        completed = []
-
-        def scoring(fitted, X_validation, y_validation):
-            score = scorer(fitted, X_validation, y_validation)
-            params = fitted.get_params()
-            completed.append({**{key: params[key] for key in param_grid}, "validation_rmse": -score})
-            table = pd.DataFrame(completed)
-            table["rank"] = table["validation_rmse"].rank(method="min").astype(int)
-            temporary = Path(checkpoint_path).with_suffix(".tmp")
-            table.sort_values("rank", kind="stable").to_csv(temporary, index=False, na_rep="None")
-            temporary.replace(checkpoint_path)
-            print(f"Completed {len(completed)}/{len(ParameterGrid(param_grid))}: validation RMSE={-score:.6f}", flush=True)
-            return score
-
-    search = GridSearchCV(
-        estimator, param_grid, scoring=scoring,
-        cv=PredefinedSplit(folds), refit=False, n_jobs=1,
-        error_score="raise", return_train_score=False, verbose=verbose,
-    )
-    return search.fit(X, y)
+    """Fit each candidate on train only. Keep the first model at the lowest RMSE."""
+    if len(candidates) == 0:
+        raise ValueError("At least one candidate is required")
+    best_model, best_rmse = None, float("inf")
+    records = []
+    path = Path(output_dir) / "validation_results.csv"
+    for number, params in enumerate(candidates, start=1):
+        estimator = RandomForestRegressor(
+            **(RF_PARAMS | params), random_state=model_seed, n_jobs=n_jobs,
+        )
+        model = SklearnAdapter(estimator, sequence_length=X_train.shape[1])
+        print(f"Fitting {number}/{len(candidates)}: {params}", flush=True)
+        start = perf_counter()
+        model.fit(X_train, y_train)
+        fit_seconds = perf_counter() - start
+        metrics = regression_metrics(y_val, model.predict(X_val))
+        rmse = metrics["rmse"]
+        records.append({
+            "candidate": number, **params, "validation_rmse": rmse,
+            "pearson_r": metrics["pearson_r"], "pearson_r_squared": metrics["pearson_r_squared"],
+            "pearson_note": metrics["pearson_note"], "fit_seconds": fit_seconds,
+        })
+        results = pd.DataFrame(records)
+        temporary = path.with_suffix(".tmp")
+        results.to_csv(temporary, index=False)
+        temporary.replace(path)
+        if rmse < best_rmse:
+            best_model, best_rmse = model, rmse
+        print(f"Validation RMSE={rmse:.9f}, fit={fit_seconds:.2f}s", flush=True)
+    return best_model, results
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-path", type=Path, default=Path("data/raw/GSM3130435_egfp_unmod_1.csv"))
-    parser.add_argument("--split-seed", type=int, default=42)
-    parser.add_argument("--model-seed", type=int, default=42)
-    parser.add_argument("--n-jobs", type=int, default=6, help="Forest threads; grid candidates run sequentially")
-    parser.add_argument("--output-dir", type=Path, default=Path("results/rf_grid16_seed42"))
-    parser.add_argument("--baseline-model", type=Path, help="Optional trusted prior model for validation comparison")
-    args = parser.parse_args()
-    if args.output_dir.exists():
-        parser.error(f"Output directory already exists: {args.output_dir}")
-
-    raw = load_data(args.data_path)
-    cleaned, _ = clean_data(raw)
-    del raw
-    train, val, test = create_splits(cleaned, seed=args.split_seed)
+    cleaned, _ = clean_data(load_data(DATA_PATH))
+    train, val, test = create_splits(cleaned, seed=SPLIT_SEED)
     if len(train) < 2 or len(val) < 2:
-        parser.error("At least two training and validation rows are required")
+        raise ValueError("At least two training and validation rows are required")
+    test_rows = len(test)
     del test, cleaned
     X_train = one_hot_encode(train["utr"].tolist())
     y_train = train["rl"].to_numpy(dtype="float32")
     X_val = one_hot_encode(val["utr"].tolist())
     y_val = val["rl"].to_numpy(dtype="float32")
-    if args.baseline_model is not None:
-        baseline = SklearnAdapter.load(args.baseline_model)
+    del train
+    if BASELINE_MODEL is not None:
+        baseline = SklearnAdapter.load(BASELINE_MODEL)
         previous = regression_metrics(y_val, baseline.predict(X_val))
         print(f"Previous model validation: RMSE {previous['rmse']:.6f}, "
               f"Pearson r {previous['pearson_r']:.6f}, Pearson r² {previous['pearson_r_squared']:.6f}")
         del baseline
 
-    args.output_dir.mkdir(parents=True, exist_ok=False)
-    count = len(ParameterGrid(PARAM_GRID))
-    print(f"Full train={len(train)}, validation={len(val)}; searching {count} combinations; test not evaluated", flush=True)
-    search = search_random_forest(
-        X_train, y_train, X_val, y_val, PARAM_GRID,
-        model_seed=args.model_seed, n_jobs=args.n_jobs,
-        checkpoint_path=args.output_dir / "cv_results.csv",
+    output_dir = RESULTS_DIR / f"rf_grid4_seed{SPLIT_SEED}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Full train={len(y_train)}, validation={len(y_val)}, held-out test={test_rows}", flush=True)
+    model, results = search_candidates(
+        X_train, y_train, X_val, y_val, candidates=CANDIDATES,
+        model_seed=MODEL_SEED, n_jobs=N_JOBS, output_dir=output_dir,
     )
-    results = pd.DataFrame(search.cv_results_["params"])
-    results["validation_rmse"] = -search.cv_results_["mean_test_score"]
-    results["rank"] = search.cv_results_["rank_test_score"]
-    results["fit_seconds"] = search.cv_results_["mean_fit_time"]
-    temporary = args.output_dir / "cv_results.tmp"
-    results.sort_values("rank", kind="stable").to_csv(temporary, index=False, na_rep="None")
-    temporary.replace(args.output_dir / "cv_results.csv")
-    print(f"Best parameters: {search.best_params_}; fitting on training data only", flush=True)
-    model = SklearnAdapter(
-        clone(search.estimator).set_params(**search.best_params_), sequence_length=X_train.shape[1],
-    ).fit(X_train, y_train)
+    best = results.loc[results["validation_rmse"].idxmin()]
+    best_params = CANDIDATES[int(best["candidate"]) - 1]
     predictions = model.predict(X_val)
     selected_metrics = regression_metrics(y_val, predictions)
-    np.testing.assert_allclose(selected_metrics["rmse"], -search.best_score_, rtol=1e-10)
-    model.save(args.output_dir / "random_forest.joblib")
+    np.testing.assert_allclose(selected_metrics["rmse"], best["validation_rmse"], rtol=1e-12)
+    model.save(output_dir / "random_forest.joblib")
     val[["source_row", "utr", "rl"]].assign(prediction=predictions).to_csv(
-        args.output_dir / "validation_predictions.csv", index=False,
+        output_dir / "validation_predictions.csv", index=False,
     )
-    settings = ", ".join(f"{key}={search.best_params_[key]}" for key in PARAM_GRID)
+    settings = ", ".join(f"{key}={value}" for key, value in best_params.items())
     train_mean = y_train.mean(dtype=np.float64)
     baseline_rmse = np.sqrt(np.mean((y_val.astype(float) - train_mean) ** 2))
     summary = (
@@ -131,9 +110,9 @@ def main():
         f"training-mean baseline RMSE {baseline_rmse:.6f}\n"
         "Test: not evaluated\n"
     )
-    (args.output_dir / "summary.txt").write_text(summary, encoding="utf-8")
+    (output_dir / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")
-    print(f"output_dir: {args.output_dir.resolve()}")
+    print(f"output_dir: {output_dir.resolve()}")
 
 
 if __name__ == "__main__":

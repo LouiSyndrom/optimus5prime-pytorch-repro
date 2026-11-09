@@ -1,8 +1,9 @@
-"""Train Ridge and report Pearson r² as in the paper; select alpha by validation RMSE."""
+"""Fit Ridge at one fixed alpha and evaluate the validation and held-out test splits."""
 
 import argparse
+from datetime import datetime
 from pathlib import Path
-from time import perf_counter
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,19 @@ from ml.data.encoding import one_hot_encode
 from ml.data.io import clean_data, load_data
 from ml.data.split import create_splits
 from ml.models.sklearn_adapter import SklearnAdapter
+
+DATA_PATH = Path(__file__).resolve().parent / "data/raw/GSM3130435_egfp_unmod_1.csv"
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+SEED = 42
+FINAL_ALPHA = 1000.0
+
+
+def xy(frame):
+    return one_hot_encode(frame["utr"].tolist()), frame["rl"].to_numpy(dtype="float32")
+
+
+def build_model(*, alpha, sequence_length=50):
+    return SklearnAdapter(Ridge(alpha=alpha), sequence_length=sequence_length)
 
 
 def regression_metrics(y_true, predictions):
@@ -31,82 +45,64 @@ def regression_metrics(y_true, predictions):
     }
 
 
-def select_alpha(X_train, y_train, X_val, y_val, alphas):
-    """Return the best train-only model and validation search results; ties keep first."""
-    best_model, best_rmse = None, float("inf")
-    records = []
-    for alpha in alphas:
-        model = SklearnAdapter(Ridge(alpha=alpha), sequence_length=X_train.shape[1])
-        start = perf_counter()
-        model.fit(X_train, y_train)
-        fit_seconds = perf_counter() - start
-        start = perf_counter()
-        predictions = model.predict(X_val)
-        predict_seconds = perf_counter() - start
-        rmse = float(np.sqrt(mean_squared_error(y_val, predictions)))
-        records.append({"alpha": alpha, "validation_rmse": rmse,
-                        "fit_seconds": fit_seconds, "predict_seconds": predict_seconds})
-        print(f"alpha={alpha:g}, validation RMSE={rmse:.6f}", flush=True)
-        if rmse < best_rmse:
-            best_model, best_rmse = model, rmse
-    return best_model, pd.DataFrame(records)
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-path", type=Path, default=Path("data/raw/GSM3130435_egfp_unmod_1.csv"))
-    parser.add_argument("--alphas", type=float, nargs="+", default=[0.1, 1, 10, 100, 1000, 10000])
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", type=Path, default=Path("results/ridge"))
+    parser = argparse.ArgumentParser(
+        description=__doc__, epilog="To search multiple alphas, edit CANDIDATES in grid_search_ridge.py and run it.",
+    )
+    parser.add_argument("--data-path", type=Path, default=DATA_PATH)
+    parser.add_argument("--alpha", type=float, default=FINAL_ALPHA)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir = args.output_dir
+    if output_dir is None:
+        output_dir = RESULTS_DIR / f"ridge_fixed_seed{args.seed}"
+        if output_dir.exists():
+            output_dir = output_dir.with_name(f"{output_dir.name}_{datetime.now():%Y%m%d_%H%M%S_%f}")
+    if output_dir.exists():
+        parser.error(f"Output directory already exists: {output_dir}")
+
     cleaned, _ = clean_data(load_data(args.data_path))
     if len(cleaned) < 20:
         parser.error("At least 20 cleaned rows are needed for train/validation/test metrics")
     train, val, test = create_splits(cleaned, seed=args.seed)
     print(f"Cleaned rows: {len(cleaned)}; train={len(train)}, val={len(val)}, test={len(test)}", flush=True)
-    X_train = one_hot_encode(train["utr"].tolist())
-    y_train = train["rl"].to_numpy(dtype="float32")
-    X_val = one_hot_encode(val["utr"].tolist())
-    y_val = val["rl"].to_numpy(dtype="float32")
-
-    model, search = select_alpha(X_train, y_train, X_val, y_val, args.alphas)
-    search.to_csv(args.output_dir / "alpha_search.csv", index=False)
-    val_predictions = model.predict(X_val)
-    model.save(args.output_dir / "ridge.joblib")
-    restored = SklearnAdapter.load(args.output_dir / "ridge.joblib")
-    np.testing.assert_allclose(restored.predict(X_val), val_predictions, equal_nan=False)
-    del X_train, X_val
-
-    # Alpha is now fixed. Test data never enters fitting or parameter selection.
-    X_test = one_hot_encode(test["utr"].tolist())
-    y_test = test["rl"].to_numpy(dtype="float32")
-    test_predictions = restored.predict(X_test)
-    val_metrics = regression_metrics(y_val, val_predictions)
-    test_metrics = regression_metrics(y_test, test_predictions)
-    metrics = pd.DataFrame([
-        {"split": "validation", **val_metrics},
-        {"split": "test", **test_metrics},
-    ])
-    metrics.to_csv(args.output_dir / "metrics.csv", index=False)
-    for name, part, predictions in [("validation", val, val_predictions), ("test", test, test_predictions)]:
-        part[["source_row", "utr", "rl"]].assign(prediction=predictions).to_csv(
-            args.output_dir / f"{name}_predictions.csv", index=False,
-        )
-
+    del cleaned
+    X_train, y_train = xy(train)
+    model = build_model(alpha=args.alpha).fit(X_train, y_train)
+    del X_train
     train_mean = y_train.mean(dtype=np.float64)
-    lines = [f"Parameters: alpha={model.estimator.alpha}", f"Training samples: {len(y_train):,}"]
-    for split, labels, scores in (("Validation", y_val, val_metrics), ("Test", y_test, test_metrics)):
-        baseline_rmse = np.sqrt(np.mean((labels.astype(float) - train_mean) ** 2))
-        lines.append(
-            f"{split}: n={len(labels):,}, RMSE {scores['rmse']:.6f}, "
-            f"Pearson r {scores['pearson_r']:.6f}, Pearson r² {scores['pearson_r_squared']:.6f}, "
-            f"training-mean baseline RMSE {baseline_rmse:.6f}"
-        )
-    summary = "\n".join(lines) + "\n"
-    (args.output_dir / "summary.txt").write_text(summary, encoding="utf-8")
+    lines = [f"Parameters: alpha={args.alpha}", f"Training samples: {len(y_train):,}"]
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=output_dir.parent) as temp:
+        staging = Path(temp) / "final"
+        staging.mkdir()
+        model_path = staging / "ridge.joblib"
+        model.save(model_path)
+        restored = SklearnAdapter.load(model_path)
+        rows = []
+        for name, part in (("validation", val), ("test", test)):
+            X, labels = xy(part)
+            predictions = restored.predict(X)
+            if name == "validation":
+                np.testing.assert_allclose(predictions, model.predict(X), equal_nan=False)
+            scores = regression_metrics(labels, predictions)
+            rows.append({"split": name, **scores})
+            part[["source_row", "utr", "rl"]].assign(prediction=predictions.astype(float)).to_csv(
+                staging / f"{name}_predictions.csv", index=False,
+            )
+            baseline_rmse = np.sqrt(np.mean((labels.astype(float) - train_mean) ** 2))
+            lines.append(
+                f"{name.title()}: n={len(labels):,}, RMSE {scores['rmse']:.6f}, "
+                f"Pearson r {scores['pearson_r']:.6f}, Pearson r² {scores['pearson_r_squared']:.6f}, "
+                f"training-mean baseline RMSE {baseline_rmse:.6f}"
+            )
+        pd.DataFrame(rows).to_csv(staging / "metrics.csv", index=False)
+        summary = "\n".join(lines) + "\n"
+        (staging / "summary.txt").write_text(summary, encoding="utf-8")
+        staging.rename(output_dir)
     print(summary, end="")
-    print(f"Output: {args.output_dir.resolve()}")
+    print(f"Output: {output_dir.resolve()}")
 
 
 if __name__ == "__main__":
