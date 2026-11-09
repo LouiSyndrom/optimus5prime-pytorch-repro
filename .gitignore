@@ -49,3 +49,5 @@ dist/
 
 # Progress
 RIDGE_PROGRESS.md
+RF_PROGRESS.md
+XGBOOST_PROGRESS.md
