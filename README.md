@@ -49,6 +49,6 @@ No training results are included or claimed in this refactor.
 
 ## Authorship and AI use
 
-The baseline implementations were adapted from `feature/ml-baselines`, whose relevant commits are authored by Zehao. The optimized CNN and its split protocol were adapted from `feature/CNN_optimized`, authored by Yefeng Lin. Repository history preserves the original work.
+The initial CNN model was developed by Brain, with further optimization and the split protocol implemented by Evan Lin on `feature/CNN_optimized`. The remaining baseline models were implemented by Zehao on `feature/ml-baselines`. The repository's commit history preserves the original contributions.
 
 This integration refactor was created with assistance from OpenAI Codex. Human review by the project authors is required before course submission; this repository does not claim that review or experimental validation has been completed.
