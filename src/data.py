@@ -2,8 +2,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
-from torch.utils.data import TensorDataset
 
 from src.config import (
     BASE_ORDER,
@@ -17,34 +15,43 @@ from src.config import (
 )
 
 
+# Load and check the input dataset
 def load_data(path):
     path = Path(path)
     columns = ["utr", "rl", "total_reads"] + FRACTION_COLUMNS
     data = pd.read_csv(path, usecols=columns)
 
+    # Check the row count
     if len(data) != EXPECTED_ROWS:
         raise ValueError(f"Expected {EXPECTED_ROWS} rows, found {len(data)}")
 
+    # Check every sequence
     valid_sequences = data["utr"].str.fullmatch(f"[{BASE_ORDER}]{{{SEQUENCE_LENGTH}}}", na=False)
     if not valid_sequences.all():
         raise ValueError("The dataset contains invalid 50-nucleotide sequences")
 
+    # Check numeric values
     numeric_columns = ["rl", "total_reads"] + FRACTION_COLUMNS
     numeric_values = data[numeric_columns].to_numpy(dtype=np.float64)
     if not np.isfinite(numeric_values).all():
         raise ValueError("The dataset contains missing or non-finite numeric values")
 
+    # Check auxiliary fractions
     fractions = data[FRACTION_COLUMNS].to_numpy(dtype=np.float64)
     if (fractions < 0).any() or not np.allclose(fractions.sum(axis=1), 1.0, atol=1e-4):
         raise ValueError("Auxiliary fractions must be non-negative and sum to one for KL divergence")
 
+    # Keep the original row number
     data["source_row"] = np.arange(len(data))
     return data
 
 
+# Create shared training and test splits
 def create_data_splits(data, split_path):
+    # Sort sequences by read count
     data = data.sort_values("total_reads", ascending=False, kind="stable").reset_index(drop=True)
 
+    # Randomly split the middle read group
     middle_end = HIGH_READ_SIZE + TRAIN_SIZE + VALIDATION_SIZE
     rng = np.random.default_rng(SEED)
     middle_indexes = rng.permutation(np.arange(HIGH_READ_SIZE, middle_end))
@@ -53,6 +60,7 @@ def create_data_splits(data, split_path):
     high_read_indexes = np.arange(HIGH_READ_SIZE)
     low_read_indexes = np.arange(middle_end, len(data))
 
+    # Save split indexes for reuse
     split_path = Path(split_path)
     split_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
@@ -71,6 +79,7 @@ def create_data_splits(data, split_path):
     }
 
 
+# Convert nucleotide sequences into numeric arrays
 def one_hot_encode(sequences):
     encoded = np.zeros((len(sequences), 4, SEQUENCE_LENGTH), dtype=np.float32)
     for row, sequence in enumerate(sequences):
@@ -79,6 +88,7 @@ def one_hot_encode(sequences):
     return encoded
 
 
+# Prepare flat features for baseline models
 def make_baseline_data(frame):
     features = one_hot_encode(frame["utr"].tolist())
     features = features.reshape(len(frame), 4 * SEQUENCE_LENGTH)
@@ -86,7 +96,12 @@ def make_baseline_data(frame):
     return features, labels
 
 
+# Prepare tensors for the CNN
 def make_cnn_dataset(frame, mrl_mean, mrl_std):
+    import torch
+    from torch.utils.data import TensorDataset
+
+    # Scale MRL values with training statistics
     sequences = one_hot_encode(frame["utr"].tolist())
     mrls = frame["rl"].to_numpy(dtype=np.float32)
     mrls = (mrls - mrl_mean) / mrl_std

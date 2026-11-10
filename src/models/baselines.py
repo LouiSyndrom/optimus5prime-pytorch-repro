@@ -9,6 +9,7 @@ from sklearn.linear_model import Ridge
 from src.config import RANDOM_FOREST_PARAMS, RIDGE_PARAMS, SEED, XGBOOST_PARAMS
 
 
+# Create the selected baseline model
 def build_baseline_model(model_name):
     if model_name == "ridge":
         return Ridge(**RIDGE_PARAMS)
@@ -32,11 +33,13 @@ def build_baseline_model(model_name):
     raise ValueError(f"Unknown baseline model: {model_name}")
 
 
+# Save a baseline model to disk
 def save_baseline_model(model, path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, path)
 
 
+# Load a baseline model from disk
 def load_baseline_model(path):
     return joblib.load(path)

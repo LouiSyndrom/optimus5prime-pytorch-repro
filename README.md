@@ -26,6 +26,9 @@ The random split uses NumPy `default_rng(seed=42)`. Split indices are saved to `
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+python -m ipykernel install --user \
+  --name optimus5prime-pytorch-repro \
+  --display-name "Python (.venv: optimus5prime)"
 ```
 
 ## Running the pipeline
@@ -37,6 +40,8 @@ jupyter lab Pipeline.ipynb
 ```
 
 In the Training section, edit `models_to_train` to choose models. Run the four sections in order: Data Loading, Training, Inference, and Results and Visualization. Training may require substantial time and memory.
+
+Each model runs in an isolated Python process. This prevents native runtime conflicts between PyTorch and XGBoost on macOS while preserving the shared deterministic data split. CUDA is preferred when available, followed by Apple MPS and then CPU for CNN training and inference.
 
 Each model writes its checkpoint, predictions, and metrics to `results/<model>/`. The CNN also writes its training history. Combined metrics and split indices are stored directly in `results/`. Generated results and checkpoints are ignored by Git.
 

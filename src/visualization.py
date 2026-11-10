@@ -4,10 +4,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+# Compare model accuracy and error
 def plot_model_comparison(metrics, save_path=None):
     high_read = metrics[metrics["dataset"] == "high_read_test"]
     model_names = high_read["model"].tolist()
 
+    # Draw correlation and error charts
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     axes[0].bar(model_names, high_read["pearson_r_squared"])
     axes[0].set(ylabel="Pearson r squared", title="High-read prediction correlation")
@@ -22,12 +24,14 @@ def plot_model_comparison(metrics, save_path=None):
     return fig
 
 
+# Compare actual and predicted MRL values
 def plot_actual_vs_predicted(predictions, model_name, save_path=None):
     actual = predictions["actual_mrl"].to_numpy()
     predicted = predictions["predicted_mrl"].to_numpy()
     minimum = min(actual.min(), predicted.min())
     maximum = max(actual.max(), predicted.max())
 
+    # Draw predictions with a perfect match line
     fig, axis = plt.subplots(figsize=(6, 6))
     axis.scatter(actual, predicted, s=4, alpha=0.15)
     axis.plot([minimum, maximum], [minimum, maximum], "r--")
@@ -43,6 +47,7 @@ def plot_actual_vs_predicted(predictions, model_name, save_path=None):
     return fig
 
 
+# Plot CNN training and validation history
 def plot_cnn_learning_curves(history, save_path=None):
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     axes[0].plot(history["epoch"], history["train_r2"], label="Train")
@@ -60,11 +65,13 @@ def plot_cnn_learning_curves(history, save_path=None):
     return fig
 
 
+# Compare high-read and low-read results
 def plot_read_group_comparison(metrics, save_path=None):
     table = metrics.pivot(index="model", columns="dataset", values="pearson_r_squared")
     positions = np.arange(len(table))
     width = 0.35
 
+    # Draw paired bars for each model
     fig, axis = plt.subplots(figsize=(8, 4))
     axis.bar(
         positions - width / 2,

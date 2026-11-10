@@ -1,9 +1,11 @@
 from pathlib import Path
 
+# Set project file paths
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = PROJECT_DIR / "data/GSM3130435_egfp_unmod_1.csv.gz"
 RESULTS_DIR = PROJECT_DIR / "results"
 
+# Set data and split values
 SEED = 42
 SEQUENCE_LENGTH = 50
 BASE_ORDER = "ATGC"
@@ -13,6 +15,7 @@ HIGH_READ_SIZE = 20_000
 TRAIN_SIZE = 240_000
 VALIDATION_SIZE = 20_000
 
+# Set CNN training values
 BATCH_SIZE = 256
 LEARNING_RATE = 0.0003
 WEIGHT_DECAY = 0.0001
@@ -20,6 +23,7 @@ MAX_EPOCHS = 30
 EARLY_STOPPING_PATIENCE = 5
 AUXILIARY_LOSS_WEIGHT = 0.1
 
+# Set baseline model values
 RIDGE_PARAMS = {"alpha": 1000.0}
 RANDOM_FOREST_PARAMS = {
     "n_estimators": 100,
@@ -43,6 +47,7 @@ XGBOOST_PARAMS = {
     "reg_lambda": 1.0,
 }
 
+# List supported models and saved files
 MODEL_NAMES = ["ridge", "random_forest", "xgboost", "cnn"]
 MODEL_FILES = {
     "ridge": "ridge.joblib",
