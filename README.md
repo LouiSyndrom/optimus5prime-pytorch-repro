@@ -52,8 +52,7 @@ No training results are included or claimed in this refactor.
 - Sample, P. J. et al. [Human 5′ UTR design and variant effect prediction from a massively parallel translation assay](https://www.nature.com/articles/s41587-019-0164-5). *Nature Biotechnology* 37, 803–809 (2019).
 - [Original Optimus 5-Prime source code](https://github.com/pjsample/human_5utr_modeling)
 
-## Authorship and AI use
+## Authorship
 
 The initial CNN model was developed by Brain, with further optimization and the split protocol implemented by Evan Lin on `feature/CNN_optimized`. The remaining baseline models were implemented by Zehao on `feature/ml-baselines`. The repository's commit history preserves the original contributions.
 
-This integration refactor was created with assistance from OpenAI Codex. Human review by the project authors is required before course submission; this repository does not claim that review or experimental validation has been completed.
