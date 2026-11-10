@@ -1,58 +1,151 @@
 # Optimus 5-Prime PyTorch Reproduction
 
-This repository provides one simple pipeline for predicting mean ribosome load (MRL) from 50-nucleotide 5′ UTR sequences. `Pipeline.ipynb` uses Python backend files for four models:
+A PyTorch-based reproduction of Optimus 5-Prime for predicting mean ribosome load (MRL) from 50-nucleotide 5′ UTR sequences.
 
-- Ridge Regression
-- Random Forest
-- XGBoost
-- Optimized Multiscale CNN
+This project compares an optimized Multiscale CNN with three machine learning baseline models. All models use the same dataset and data split for consistent evaluation.
 
-The original CNN is not included.
+## 1. Models
 
-## Dataset and split
+Four models are included:
 
-The pipeline reads `data/GSM3130435_egfp_unmod_1.csv.gz`, which contains 326,033 sequences. It sorts rows by `total_reads` in descending stable order and creates these shared splits:
+- **Ridge Regression:** Linear regression with L2 regularization.
+- **Random Forest:** An ensemble of decision trees.
+- **XGBoost:** Gradient boosting with decision trees.
+- **Multiscale CNN:** A PyTorch model using parallel convolutions, dilated residual blocks, and auxiliary prediction.
 
-- High-read Test: first 20,000 rows
-- Training: 240,000 rows randomly selected from rows 20,000 through 279,999
-- Validation: the other 20,000 rows in that range
-- Low-read Test: remaining 46,033 rows
+The CNN uses convolution kernel sizes of 3, 7, and 11, followed by three residual blocks. It predicts MRL and 14 auxiliary ribosome-fraction values.
 
-The random split uses NumPy `default_rng(seed=42)`. Split indices are saved to `results/split_indexes.npz`. All models use `ATGC` One-Hot encoding. The CNN receives `(N, 4, 50)` arrays, and the baseline models receive flattened `(N, 200)` arrays.
+## 2. Dataset
 
-## Installation
+The dataset contains 326,033 sequences from the original Optimus 5-Prime study.
+
+File: `data/GSM3130435_egfp_unmod_1.csv.gz`
+
+Sequences are sorted by `total_reads` in descending order.
+
+| Dataset        | Samples | Description                                         |
+| -------------- | ------: | --------------------------------------------------- |
+| Training       | 240,000 | Randomly selected from the middle 260,000 sequences |
+| Validation     |  20,000 | Remaining sequences from the same group             |
+| High-read Test |  20,000 | Sequences with the highest read counts              |
+| Low-read Test  |  46,033 | Remaining low-read sequences                        |
+
+The random seed is 42.
+
+All models use the same split and One-Hot encoding with nucleotide order `ATGC`. The CNN receives `(N, 4, 50)` inputs, while baseline models use flattened `(N, 200)` features.
+
+The high-read test set follows the original paper's evaluation approach. The separate validation and low-read test sets are additions to this reproduction.
+
+## 3. Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/LouiSyndrom/optimus5prime-pytorch-repro.git
+cd optimus5prime-pytorch-repro
+```
+
+Create a Python environment and install dependencies:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-python -m ipykernel install --user \
-  --name optimus5prime-pytorch-repro \
-  --display-name "Python (.venv: optimus5prime)"
 ```
 
-## Running the pipeline
+The project requires Python 3.10 or newer.
 
-Open the notebook from the repository root:
+## 4. Running the Pipeline
+
+Start JupyterLab:
 
 ```bash
 jupyter lab Pipeline.ipynb
 ```
 
-In the Training section, edit `models_to_train` to choose models. Run the four sections in order: Data Loading, Training, Inference, and Results and Visualization. Training may require substantial time and memory.
+The Notebook contains four sections:
 
-Each model runs in an isolated Python process. This prevents native runtime conflicts between PyTorch and XGBoost on macOS while preserving the shared deterministic data split. CUDA is preferred when available, followed by Apple MPS and then CPU for CNN training and inference.
+1. **Data Loading:** Load the dataset and create shared data splits.
+2. **Training:** Train selected models or reuse existing checkpoints.
+3. **Inference:** Evaluate models on high-read and low-read test sets.
+4. **Results and Visualization:** Compare performance and display prediction plots.
 
-Each model writes its checkpoint, predictions, and metrics to `results/<model>/`. The CNN also writes its training history. Combined metrics and split indices are stored directly in `results/`. Generated results and checkpoints are ignored by Git.
+To select models, edit:
 
-No training results are included or claimed in this refactor.
+```python
+models_to_train = ["ridge", "random_forest", "xgboost", "cnn"]
+```
 
-## References
+Existing checkpoints are reused by default. To train the selected models again, set:
 
-- Sample, P. J. et al. [Human 5′ UTR design and variant effect prediction from a massively parallel translation assay](https://www.nature.com/articles/s41587-019-0164-5). *Nature Biotechnology* 37, 803–809 (2019).
-- [Original Optimus 5-Prime source code](https://github.com/pjsample/human_5utr_modeling)
+```python
+force_retrain = True
+```
+
+Models run in separate Python processes to avoid native library conflicts between PyTorch and XGBoost.
+
+CNN training supports CUDA, Apple MPS, and CPU.
+
+## 5. Results
+
+The following results are saved in the repository under `results/`.
+
+| Model              | High-read Pearson r² | High-read RMSE | Low-read Pearson r² |
+| ------------------ | -------------------: | -------------: | ------------------: |
+| Ridge              |               0.1277 |         1.9523 |              0.0233 |
+| Random Forest      |               0.2367 |         1.8283 |              0.0636 |
+| XGBoost            |               0.6463 |         1.2951 |              0.2068 |
+| **Multiscale CNN** |           **0.9500** |     **0.5981** |          **0.3234** |
+
+The Multiscale CNN achieved the highest Pearson r² and lowest RMSE on the high-read test set.
+
+All models performed worse on low-read data. This may reflect increased measurement noise, differences in data distribution, or both.
+
+Pearson r² is the squared Pearson correlation coefficient, not the standard regression R² score.
+
+The pipeline also saves MSE, RMSE, Pearson r, and regression R² for each model.
+
+## 6. Project Structure
+
+```text
+optimus5prime-pytorch-repro/
+├── Pipeline.ipynb
+├── src/
+│   ├── config.py
+│   ├── data.py
+│   ├── models/
+│   │   ├── baselines.py
+│   │   └── cnn.py
+│   ├── training.py
+│   ├── evaluation.py
+│   ├── visualization.py
+│   ├── pipeline.py
+│   └── runner.py
+├── data/
+├── results/
+├── pyproject.toml
+└── README.md
+```
+
+All model implementations, training functions, inference, and visualization functions are stored in Python files.
+
+`Pipeline.ipynb` serves as the main interface.
+
+The `results/` directory contains saved model checkpoints, predictions, evaluation metrics, training history, and figures.
+
+The combined model results are available in `results/model_comparison.csv`.
+
+## 7. References
+
+Sample, P. J. et al. (2019). [Human 5′ UTR design and variant effect prediction from a massively parallel translation assay](https://www.nature.com/articles/s41587-019-0164-5). *Nature Biotechnology*, 37, 803–809.
+
+Original implementation: [https://github.com/pjsample/human_5utr_modeling](https://github.com/pjsample/human_5utr_modeling)
 
 ## Authorship
 
-The initial CNN model was developed by Brain, with further optimization and the split protocol implemented by Evan Lin on `feature/CNN_optimized`. The remaining baseline models were implemented by Zehao on `feature/ml-baselines`. The repository's commit history preserves the original contributions.
+The initial CNN architecture was developed by Brain, and the optimized Multiscale CNN and its data-splitting protocol were developed by Evan Lin.
+
+Ridge Regression, Random Forest, and XGBoost baseline implementations were developed by Zehao.
+
+The repository's branch and commit history preserves the original contributions.
 
